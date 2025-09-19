@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Local Smart Agent — Dashboard</title>
+</head>
+<body>
+  <h1>Local Smart Agent Dashboard</h1>
+  <div id="toolbar">
+    <!-- REPORTS-TOOLBAR -->
+    <button onclick="alert('⚠️ Reports Index placeholder')">Reports Index</button>
+    <button onclick="alert('⚠️ Latest ZIP placeholder')">Latest ZIP</button>
+  </div>
+
+  <p>⚠️ Dashboard placeholder — функционал будет добавлен позже</p>
+</body>
+</html>

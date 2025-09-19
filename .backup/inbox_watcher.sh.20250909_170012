@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+BASE="${HOME}/ai-agent/projects/local_smart_agent"
+INBOX="${BASE}/tasks/inbox"
+DONE="${BASE}/tasks/done"
+FAILED="${BASE}/tasks/failed"
+LOG="${BASE}/logs/inbox_watcher.log"
+
+mkdir -p "${INBOX}" "${DONE}" "${FAILED}" "$(dirname "${LOG}")"
+
+log(){ printf '%s %s\n' "$(date +'%F %T')" "$*" | tee -a "${LOG}"; }
+
+get_kind(){
+  # prefer jq if present; fallback to grep/sed
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '(.kind // .task // "")' "$1" 2>>"${LOG}"
+  else
+    # very simple fallback: extract after "kind" or "task"
+    sed -nE 's/.*"kind"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p;s/.*"task"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$1" | head -n1
+  fi
+}
+
+process_file(){
+  local f="$1" k c=1
+  k="$(get_kind "$f" || true)"
+  [ -z "${k:-}" ] && { log "[watcher] unsupported (no kind/task) → $(basename "$f")"; mv -f "$f" "${FAILED}/"; return 1; }
+
+  case "$k" in
+    report_pack)
+      log "[watcher] report_pack ← $(basename "$f")"
+      if "${BASE}/bin/report_pack.sh"; then
+        mv -f "$f" "${DONE}/"
+        log "[watcher] done → $(basename "$f")"
+        return 0
+      else
+        mv -f "$f" "${FAILED}/"
+        log "[watcher] FAIL report_pack → $(basename "$f")"
+        return 1
+      fi
+      ;;
+    *)
+      log "[watcher] unsupported task kind='${k}' → $(basename "$f")"
+      mv -f "$f" "${FAILED}/"
+      return 1
+      ;;
+  esac
+}
+
+log "[watcher] start pid=$$"
+while true; do
+  shopt -s nullglob
+  for f in "${INBOX}"/*.json; do
+    lock="${f}.lock"
+    if ( set -o noclobber; : > "$lock" ) 2>/dev/null; then
+      trap 'rm -f "$lock"' RETURN
+      process_file "$f" || true
+      rm -f "$lock"
+      trap - RETURN
+    fi
+  done
+  sleep 1
+done

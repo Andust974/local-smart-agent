@@ -1,0 +1,212 @@
+# === PASS_GEN_START ===
+# Генерация пароля (bash-only) и экспорт ENV
+gen_pass(){ LC_ALL=C tr -dc 'A-Za-z0-9!@#%^*-_=+?.' </dev/urandom | head -c 20; }
+: "${TASK_API_BASIC_USER:=andrei}"
+: "${TASK_API_BASIC_PASS:=$(gen_pass)}"
+for _ in 1 2 3; do [ -n "$TASK_API_BASIC_PASS" ] && break; TASK_API_BASIC_PASS="$(gen_pass)"; done
+export TASK_API_BASIC_USER TASK_API_BASIC_PASS
+echo "[install] USER=$TASK_API_BASIC_USER PASS(len)=${#TASK_API_BASIC_PASS}"
+# === PASS_GEN_END ===
+
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APP_DIR="${APP_DIR:-$HOME/ai-agent/projects/local_smart_agent}"
+UNIT_DIR="$HOME/.config/systemd/user/task-api.service.d"
+UVICORN="$APP_DIR/.venv/bin/uvicorn"
+PORT="${TASK_API_PORT:-8766}"
+USER_NAME="${TASK_API_BASIC_USER:-andrei}"
+
+# проверки
+[[ -x "$UVICORN" ]] || { echo ">> $UVICORN не найден. Установи зависимости в .venv"; exit 2; }
+mkdir -p "$UNIT_DIR"
+
+# генерация пароля (bash-only)
+gen_pass() { LC_ALL=C tr -dc 'A-Za-z0-9!@#%^*-_=+?.' </dev/urandom | head -c 20; }
+PASS="${PASS:-$(gen_pass)}"; for _ in 1 2 3; do [ -n "$PASS" ] && break; PASS="$(gen_pass)"; done
+[ -n "$PASS" ] || { echo ">> FAIL: не удалось сгенерировать пароль"; exit 2; }
+echo "→ Generated PASS (len=${#PASS})"
+
+# drop-in (пароль в кавычках!)
+cat > "$UNIT_DIR/override.conf" <<EOI
+[Service]
+Environment=TASK_API_BASIC_USER=${USER_NAME}
+Environment=TASK_API_BASIC_PASS="${PASS}"
+ExecStart=
+ExecStart=${UVICORN} bin.task_api:app --host 127.0.0.1 --port ${PORT} --log-level info --timeout-keep-alive 5
+Restart=always
+RestartSec=1
+EOI
+
+# перезапуск и проверка
+systemctl --user daemon-reload
+systemctl --user enable --now task-api.service
+sleep 1
+systemctl --user --no-pager --lines=8 status task-api.service || true
+
+# selftest (читает реальные ENV сервиса)
+./bin/selftest.sh
+
+echo "----------------------------------------"
+echo "Task API: http://127.0.0.1:${PORT}"
+echo "USER: ${USER_NAME}"
+echo "PASS: ${PASS}"
+echo "Self-test: OK"
+
+# === WATCHER_INSTALL_START ===
+install_watcher() {
+  set -Eeuo pipefail
+  BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROJ_DIR="$BASE_DIR"
+
+  # 1) минимальный one-shot watcher (обновляем/создаём)
+  mkdir -p "$PROJ_DIR/scripts" "$PROJ_DIR/logs" "$PROJ_DIR/tasks/inbox" "$PROJ_DIR/tasks/done" "$PROJ_DIR/tasks/failed"
+  cat > "$PROJ_DIR/scripts/inbox_watcher.sh" <<'WSH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$BASE_DIR"
+LOG="logs/inbox_watcher.log"
+LOCK="$BASE_DIR/.inbox_watcher.lock"
+mkdir -p logs tasks/inbox tasks/done tasks/failed
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "[$(date +'%F %T')] [skip] already running" | tee -a "$LOG"
+  exit 0
+fi
+echo "[$(date +'%F %T')] [start] inbox_watcher one-shot" | tee -a "$LOG"
+shopt -s nullglob
+picked=0
+for f in tasks/inbox/*.json; do
+  echo "[$(date +'%F %T')] [pick] $f" | tee -a "$LOG"
+  # простая обработка: кладём маркер в reports и переносим json в done
+  bn="$(basename "$f")"
+  echo "done: $bn" > "reports/${bn%.json}.done.txt"
+  mv -f -- "$f" "tasks/done/$bn"
+  picked=1
+done
+if [[ $picked -eq 0 ]]; then
+  echo "[$(date +'%F %T')] [idle] no *.json in inbox" | tee -a "$LOG"
+fi
+WSH
+  chmod +x "$PROJ_DIR/scripts/inbox_watcher.sh"
+
+  # 2) systemd user unit + timer
+  UNIT_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$UNIT_DIR" "$UNIT_DIR/inbox-watcher.service.d"
+
+  cat > "$UNIT_DIR/inbox-watcher.service" <<EOF
+[Unit]
+Description=Local Smart Agent - Inbox Watcher (oneshot)
+
+[Service]
+Type=oneshot
+WorkingDirectory=${PROJ_DIR}
+ExecStart=${PROJ_DIR}/scripts/inbox_watcher.sh
+Nice=10
+IOSchedulingClass=best-effort
+EOF
+
+  # Сносим любые старые override, которые указывали на core/watch_any.sh
+  rm -f "$UNIT_DIR/inbox-watcher.service.d/override.conf" || true
+
+  cat > "$UNIT_DIR/inbox-watcher.timer" <<'EOF'
+[Unit]
+Description=Run inbox-watcher.service every minute
+
+[Timer]
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=inbox-watcher.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl --user daemon-reload
+  systemctl --user enable --now inbox-watcher.timer
+}
+# === WATCHER_INSTALL_END ===
+
+# вызовем установку watcher'а в конце скрипта (после API)
+install_watcher
+
+# === WATCHER_INSTALL_START ===
+install_watcher() {
+  set -Eeuo pipefail
+  BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROJ_DIR="$BASE_DIR"
+
+  # 1) минимальный one-shot watcher (обновляем/создаём)
+  mkdir -p "$PROJ_DIR/scripts" "$PROJ_DIR/logs" "$PROJ_DIR/tasks/inbox" "$PROJ_DIR/tasks/done" "$PROJ_DIR/tasks/failed"
+  cat > "$PROJ_DIR/scripts/inbox_watcher.sh" <<'WSH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$BASE_DIR"
+LOG="logs/inbox_watcher.log"
+LOCK="$BASE_DIR/.inbox_watcher.lock"
+mkdir -p logs tasks/inbox tasks/done tasks/failed
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "[$(date +'%F %T')] [skip] already running" | tee -a "$LOG"
+  exit 0
+fi
+echo "[$(date +'%F %T')] [start] inbox_watcher one-shot" | tee -a "$LOG"
+shopt -s nullglob
+picked=0
+for f in tasks/inbox/*.json; do
+  echo "[$(date +'%F %T')] [pick] $f" | tee -a "$LOG"
+  # простая обработка: кладём маркер в reports и переносим json в done
+  bn="$(basename "$f")"
+  echo "done: $bn" > "reports/${bn%.json}.done.txt"
+  mv -f -- "$f" "tasks/done/$bn"
+  picked=1
+done
+if [[ $picked -eq 0 ]]; then
+  echo "[$(date +'%F %T')] [idle] no *.json in inbox" | tee -a "$LOG"
+fi
+WSH
+  chmod +x "$PROJ_DIR/scripts/inbox_watcher.sh"
+
+  # 2) systemd user unit + timer
+  UNIT_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$UNIT_DIR" "$UNIT_DIR/inbox-watcher.service.d"
+
+  cat > "$UNIT_DIR/inbox-watcher.service" <<EOF
+[Unit]
+Description=Local Smart Agent - Inbox Watcher (oneshot)
+
+[Service]
+Type=oneshot
+WorkingDirectory=${PROJ_DIR}
+ExecStart=${PROJ_DIR}/scripts/inbox_watcher.sh
+Nice=10
+IOSchedulingClass=best-effort
+EOF
+
+  # Сносим любые старые override, которые указывали на core/watch_any.sh
+  rm -f "$UNIT_DIR/inbox-watcher.service.d/override.conf" || true
+
+  cat > "$UNIT_DIR/inbox-watcher.timer" <<'EOF'
+[Unit]
+Description=Run inbox-watcher.service every minute
+
+[Timer]
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=inbox-watcher.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl --user daemon-reload
+  systemctl --user enable --now inbox-watcher.timer
+}
+# === WATCHER_INSTALL_END ===
+
+# вызовем установку watcher'а в конце скрипта (после API)
+install_watcher

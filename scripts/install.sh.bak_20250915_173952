@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+# --- Path-safe context ---
+# PROJECT_ROOT = каталог проекта (на уровень выше scripts/)
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+# Логи (можно смотреть RCA после установки)
+mkdir -p "$PROJECT_ROOT/logs"
+
+echo "[INFO] PROJECT_ROOT: $PROJECT_ROOT"
+echo "[INFO] Installing Local Smart Agent dependencies..."
+
+# Неинтерактивный apt (чтобы не залипнуть на вопросах)
+export DEBIAN_FRONTEND=noninteractive
+
+# Обновление пакетов
+sudo apt-get update -yq
+
+# Основные зависимости (как были)
+sudo apt-get install -yq \
+  python3 python3-venv python3-pip \
+  tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus tesseract-ocr-pol \
+  git curl
+
+# VENV теперь строго в корне проекта
+VENVDIR="$PROJECT_ROOT/.venv"
+if [[ ! -d "$VENVDIR" ]]; then
+  python3 -m venv "$VENVDIR"
+fi
+# shellcheck disable=SC1091
+source "$VENVDIR/bin/activate"
+
+python -m pip install --upgrade pip
+# ВНИМАНИЕ: пока оставляем || true, чтобы не «уронить» установку на первом шаге
+REQ="$PROJECT_ROOT/requirements_rag.txt"
+if [[ -f "$REQ" ]]; then
+  python -m pip install -r "$REQ" || true
+else
+  echo "[WARN] requirements_rag.txt not found at $REQ — пропускаю установку Python-зависимостей"
+fi
+
+echo "[INFO] Installation complete."

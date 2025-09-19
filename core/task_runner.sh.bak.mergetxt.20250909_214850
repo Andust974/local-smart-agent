@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Заглушка task_runner
+echo "[task_runner] ⚠️ placeholder — not implemented yet"
+exit 0
+
+__handler_text_summary() {
+  local json="$1"
+  local inp outp ts
+  ts="$(date +%Y%m%d_%H%M%S)"
+  inp="$(echo "$json" | jq -r '.txt')"
+  if [ -z "${inp:-}" ] || [ ! -f "$inp" ]; then
+    echo "[text_summary] ERR: no file: $inp" >&2
+    return 1
+  fi
+  outp="$HOME/ai-agent/projects/local_smart_agent/reports/extra/summary_${ts}.txt"
+  "$HOME/ai-agent/projects/local_smart_agent/skills/extra/text_summary.py" "$inp" "$outp"
+  [ -f "$outp" ] && echo "$outp"
+}
+
+__handler_word_count() {
+  local json="$1"
+  local inp outp ts
+  ts="$(date +%Y%m%d_%H%M%S)"
+  inp="$(echo "$json" | jq -r '.txt')"
+  if [ -z "${inp:-}" ] || [ ! -f "$inp" ]; then
+    echo "[word_count] ERR: no file: $inp" >&2
+    return 1
+  fi
+  outp="$HOME/ai-agent/projects/local_smart_agent/reports/extra/stats_${ts}.json"
+  "$HOME/ai-agent/projects/local_smart_agent/skills/extra/word_count.py" "$inp" "$outp"
+  [ -f "$outp" ] && echo "$outp"
+}

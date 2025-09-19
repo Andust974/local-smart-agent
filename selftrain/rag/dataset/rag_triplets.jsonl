@@ -1,0 +1,2 @@
+{"query": "sentence-transformers==2.2.2", "positive": "sentence-transformers==2.2.2", "negatives": []}
+{"query": "sentence-transformers==2.2.2", "positive": "sentence-transformers==2.2.2", "negatives": ["sentence-transformers==2.2.2"]}

@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>Local Smart Agent</title><div id="app"></div>
+
+<!-- === OCR quick action === -->
+<style>
+.card{border:1px solid #e6e6e6;border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 3px 12px rgba(0,0,0,.06)}
+.btn{padding:10px 14px;border:0;border-radius:8px;cursor:pointer}
+.btn-primary{background:#5b8cff;color:#fff}
+.muted{color:#666;font-size:.9em;margin-top:6px}
+</style>
+
+<div class="card">
+  <h3>OCR (PDF/IMG)</h3>
+  <input id="ocrPath" type="text" placeholder="sandbox/ocr_test.pdf" style="width:70%">
+  <button class="btn btn-primary" onclick="enqueueOCR()">Запустить OCR</button>
+  <div id="ocrMsg" class="muted"></div>
+</div>
+
+<script>
+async function enqueueOCR(){
+  const p = document.getElementById('ocrPath').value || 'sandbox/ocr_test.pdf';
+  try{
+    const r = await fetch('/enqueue/ocr?path='+encodeURIComponent(p)+'&lang=eng+rus+pol',{method:'POST'});
+    const j = await r.json();
+    document.getElementById('ocrMsg').innerText = 'Queued: ' + (j.task || JSON.stringify(j));
+  }catch(e){
+    document.getElementById('ocrMsg').innerText = 'Ошибка: API недоступно. Проверь task-api.service';
+  }
+}
+</script>

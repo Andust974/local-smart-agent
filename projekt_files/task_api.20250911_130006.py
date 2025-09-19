@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+import os, base64, json, urllib.parse, http.server, socketserver, time, pathlib, mimetypes
+
+
+# --- injected: global GET /health for BaseHTTPRequestHandler ---
+def _inject_global_health_get():
+    try:
+        import http.server, json
+        from urllib.parse import urlparse
+        def _do_GET(self):
+            u = urlparse(self.path)
+            if u.path == "/health":
+                data = json.dumps({"status": "ok"}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                # сохраняем стандартное поведение «не найдено»
+                self.send_error(404, "Not Found")
+        # Глобальная подмена базового метода; работают все текущие обработчики без do_GET
+        http.server.BaseHTTPRequestHandler.do_GET = _do_GET
+    except Exception:
+        # не мешаем загрузке модуля при ошибке
+        pass
+
+_inject_global_health_get()
+# --- end injected ---
+
+from urllib.parse import urlparse, parse_qs
+import http.server, socketserver, json
+PORT  = int(os.getenv("TASK_API_PORT", "8766"))
+TOKEN = os.getenv("TASK_API_TOKEN", "changeme")
+USER  = os.getenv("TASK_API_BASIC_USER", "lsa")
+PASS  = os.getenv("TASK_API_BASIC_PASS", "changeme")
+
+BASE = pathlib.Path(__file__).resolve().parents[1]
+INBOX = BASE / "tasks" / "inbox"
+REPORTS = BASE / "reports"
+SANDBOX = BASE / "sandbox"
+INBOX.mkdir(parents=True, exist_ok=True)
+REPORTS.mkdir(parents=True, exist_ok=True)
+SANDBOX.mkdir(parents=True, exist_ok=True)
+
+# === Commands DB (SQLite) ===
+def _cmd_db_path():
+    d = BASE / 'data' / 'tg_bridge'
+    d.mkdir(parents=True, exist_ok=True)
+    return d / 'commands.sqlite'
+
+def _cmd_init():
+    import sqlite3
+    db = sqlite3.connect(str(_cmd_db_path()))
+    db.execute('''CREATE TABLE IF NOT EXISTS commands (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace TEXT DEFAULT "default",
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      payload TEXT,
+      enabled INTEGER DEFAULT 1,
+      updated_at INTEGER
+    )''')
+    db.commit(); db.close()
+
+def _cmd_list(workspace='default'):
+    import sqlite3
+    db = sqlite3.connect(str(_cmd_db_path()))
+    cur = db.execute('SELECT id,name,type,payload,enabled,updated_at FROM commands WHERE workspace=? ORDER BY id DESC', (workspace,))
+    cols = [c[0] for c in cur.description]
+    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    db.close()
+    return rows
+
+def _cmd_add(name, typ, payload, workspace='default'):
+    import sqlite3, time as _t
+    db = sqlite3.connect(str(_cmd_db_path()))
+    cur = db.execute('INSERT INTO commands (workspace,name,type,payload,enabled,updated_at) VALUES (?,?,?,?,1,?)', (workspace, name, typ, payload, int(_t.time())))
+    db.commit(); rid = cur.lastrowid; db.close(); return rid
+
+def _cmd_del(cid):
+    import sqlite3
+    db = sqlite3.connect(str(_cmd_db_path()))
+    db.execute('DELETE FROM commands WHERE id=?', (cid,))
+    db.commit(); db.close()
+
+BASIC_OK = "Basic " + base64.b64encode(f"{USER}:{PASS}".encode()).decode()
+
+def auth_ok(headers, query):
+    # 1) Basic
+    auth = headers.get("Authorization", "")
+    if auth == BASIC_OK:
+        return True
+    # 2) token fallback
+    token = query.get("token", [None])[0]
+    return token is not None and token == TOKEN
+
+def list_reports(limit=None):
+    files = []
+    for p in REPORTS.glob("*"):
+        if p.is_file():
+            try:
+                st = p.stat()
+            except Exception:
+                continue
+            files.append({
+                "name": p.name,
+                "size": st.st_size,
+                "mtime": int(st.st_mtime),
+                "href": f"/reports/{urllib.parse.quote(p.name)}",
+            })
+    files.sort(key=lambda x: x["mtime"], reverse=True)
+    return files[:limit] if limit else files
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def _send_file(self, path: pathlib.Path):
+        """Отдаём файл из каталога REPORTS с CORS и верным Content-Type."""
+        try:
+            p = path.resolve()
+
+            # Только внутри REPORTS
+            if REPORTS not in p.parents and p != REPORTS:
+                return self._json(403, {"error": "forbidden"})
+
+            if (not p.exists()) or (not p.is_file()):
+                return self._json(404, {"error": "not found"})
+
+            data = p.read_bytes()
+            ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+            if p.suffix.lower() == ".zip":
+                ctype = "application/zip"
+
+            self.send_response(200)
+            self._set_cors()
+            if ctype.startswith("text/"):
+                self.send_header("Content-Type", ctype + "; charset=utf-8")
+            else:
+                self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            if p.suffix.lower() == ".zip":
+                self.send_header("Content-Disposition", f"attachment; filename=\"{p.name}\"")
+                self.send_header("Cache-Control", "private, max-age=600")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        except Exception as e:
+            return self._json(500, {"error": "send_file fail", "detail": str(e)})
+
+    server_version = "TaskAPI/1.4"
+
+    # ===== helpers =====
+    def _set_cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET,OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization,Content-Type")
+
+    def _json(self, code, obj):
+        data = json.dumps(obj, ensure_ascii=False).encode()
+        self.send_response(code)
+        self._set_cors()
+        self.send_header("Content-Type","application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _html(self, code, html):
+        data = html.encode("utf-8")
+        self.send_response(code)
+        self._set_cors()
+        self.send_header("Content-Type","text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _unauth(self):
+        self.send_response(401)
+        self._set_cors()
+        self.send_header("WWW-Authenticate","Basic realm=\"TaskAPI\"")
+        self.end_headers()
+
+
+    def do_GET(self):
+        try:
+            from urllib.parse import urlsplit
+            u = urlsplit(self.path)
+            if u.path == "/health":
+                b = json.dumps({"status":"ok"}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type","application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+            else:
+                self.send_error(404, "Not Found")
+        except Exception as e:
+            msg = ("{\"error\":\"%s\"}" % str(e).replace('"','\"')).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type","application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(msg)))
+            self.end_headers()
+            self.wfile.write(msg)
+def get_commands():
+    import sqlite3, json
+    db = sqlite3.connect(str(BASE / "data" / "tg_bridge" / "commands.sqlite"))
+    cur = db.execute("SELECT id,name,type,payload,enabled,updated_at FROM commands WHERE workspace=?", ("default",))
+    rows = [dict(zip([c[0] for c in cur.description], r)) for r in cur.fetchall()]
+    db.close()
+    return {"items": rows}
+
+if __name__ == "__main__":
+    # Инициализация БД команд (на случай первого старта)
+    try:
+        _cmd_init()
+    except Exception:
+        pass
+
+    class _ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    with _ThreadingTCPServer(("127.0.0.1", PORT), Handler) as httpd:
+        try:
+            print(f"# Task-API listening on 127.0.0.1:{PORT}")
+        except Exception:
+            pass
+        httpd.serve_forever()
+
+
+# --- injected: health GET support (idempotent) ---
+def _ensure_health_get_support():
+    try:
+        import http.server, json
+        from urllib.parse import urlparse, parse_qs
+        # найдём первый класс-наследник BaseHTTPRequestHandler
+        target = None
+        for name, obj in globals().items():
+            try:
+                if isinstance(obj, type) and issubclass(obj, http.server.BaseHTTPRequestHandler):
+                    # пропускаем сам BaseHTTPRequestHandler
+                    if obj is not http.server.BaseHTTPRequestHandler:
+                        target = obj
+                        break
+            except Exception:
+                pass
+        if target and not hasattr(target, 'do_GET'):
+            def do_GET(self):
+                try:
+                    u = urlparse(self.path)
+                    if u.path == '/health':
+                        # допускаем наличие ?token=..., но для /health не требуем
+                        payload = {'status': 'ok'}
+                        data = json.dumps(payload).encode('utf-8')
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json; charset=utf-8')
+                        self.send_header('Content-Length', str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                    else:
+                        self.send_error(404, "Not Found")
+                except Exception as e:
+                    # На любой сбой — 500 и текст ошибки
+                    msg = ('{"error":"%s"}' % (str(e).replace('"','\"')))
+                    data = msg.encode('utf-8')
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json; charset=utf-8')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+            target.do_GET = do_GET
+    except Exception:
+        # Патч не обязателен для работы остальных маршрутов
+        pass
+
+# вызовем при импорте модуля (до main)
+_ensure_health_get_support()
+# --- end injected ---
+

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Заглушка task_runner
+echo "[task_runner] ⚠️ placeholder — not implemented yet"
+exit 0

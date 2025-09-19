@@ -1,0 +1,32 @@
+import os, base64
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+
+# импортируем базовое приложение
+from bin.task_api import app as _app
+
+_ALLOW_OPEN = ("/health", "/tasks/ping")  # пути без авторизации
+
+class BasicAuthMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app):
+        super().__init__(app)
+        self.user = os.getenv("TASK_API_BASIC_USER", "lsa")
+        self.pwd  = os.getenv("TASK_API_BASIC_PASS", "changeme")
+        self.need = "Basic " + base64.b64encode(f"{self.user}:{self.pwd}".encode()).decode()
+
+    async def dispatch(self, request: Request, call_next):
+        p = str(request.url.path)
+        if any(p.startswith(x) for x in _ALLOW_OPEN):
+            return await call_next(request)
+        auth = request.headers.get("Authorization", "")
+        if auth != self.need:
+            resp = JSONResponse({"detail":"Unauthorized"}, status_code=401)
+            resp.headers["WWW-Authenticate"] = "Basic"
+            return resp
+        return await call_next(request)
+
+# Экспортируем обёрнутое приложение
+app = _app
+if os.getenv("TASK_API_BASIC_ENABLE", "1") == "1":
+    app.add_middleware(BasicAuthMiddleware)

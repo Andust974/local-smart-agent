@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+import sys, os, json, time, shutil, subprocess, pathlib
+
+def write_meta(outdir, **meta):
+    os.makedirs(outdir, exist_ok=True)
+    with open(os.path.join(outdir, "meta.json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+def run(cmd):
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+def is_pdf(p): return str(p).lower().endswith(".pdf")
+
+def list_imgs(pages_dir):
+    imgs = sorted([str(p) for p in pathlib.Path(pages_dir).glob("*.png")])
+    return imgs
+
+def main():
+    if len(sys.argv) < 3:
+        print("usage: ocr_scan.py IN.(pdf|png|jpg) OUTDIR [lang]", file=sys.stderr); return 2
+    inp, outdir = sys.argv[1], sys.argv[2]
+    lang = sys.argv[3] if len(sys.argv)>3 else "eng+rus+pol"
+    t0 = time.time()
+    os.makedirs(outdir, exist_ok=True)
+    pages_dir = os.path.join(outdir, "pages"); os.makedirs(pages_dir, exist_ok=True)
+
+    # лицензия (мягко)
+    lic_path = os.path.expanduser("~/.config/lsa/license.json")
+    if os.path.exists(lic_path):
+        try:
+            lic = json.load(open(lic_path, encoding="utf-8"))
+            if lic.get("plan") not in ("pro","trial"):
+                write_meta(outdir, status="subscription_required", errors=["PRO/Trial required"])
+                return 0
+        except Exception:
+            pass
+
+    if not os.path.exists(inp):
+        write_meta(outdir, status="bad_input", errors=[f"no such file: {inp}"])
+        return 0
+
+    # зависимости
+    have_tess = shutil.which("tesseract") is not None
+    have_pdftoppm = shutil.which("pdftoppm") is not None
+    have_pdftocairo = shutil.which("pdftocairo") is not None
+    have_pdftotext = shutil.which("pdftotext") is not None
+
+    if is_pdf(inp):
+        # 1) попытка pdftoppm -> PNG
+        imgs, errs = [], []
+        if have_pdftoppm:
+            prefix = os.path.join(pages_dir, "page")
+            r = run(["pdftoppm", "-r", "300", "-png", inp, prefix])
+            if r.returncode == 0:
+                imgs = list_imgs(pages_dir)
+            else:
+                errs.append(r.stderr.strip())
+
+        # 2) фоллбэк pdftocairo -> PNG
+        if not imgs and have_pdftocairo:
+            r2 = run(["pdftocairo", "-png", "-r", "300", inp, os.path.join(pages_dir, "page")])
+            if r2.returncode == 0:
+                imgs = list_imgs(pages_dir)
+            else:
+                errs.append(r2.stderr.strip())
+
+        # 3) мягкий фоллбэк: если нет рендера, но есть pdftotext — попробуем вытащить текст
+        if not imgs:
+            if have_pdftotext:
+                txt_out = os.path.join(outdir, "text.txt")
+                r3 = run(["pdftotext", "-layout", inp, txt_out])
+                if r3.returncode == 0 and os.path.exists(txt_out):
+                    dur = round(time.time()-t0,2)
+                    write_meta(outdir, status="pdf_text_extracted", pages=0, lang=lang,
+                               duration_sec=dur, warnings=["rasterize_failed"], errors=errs)
+                    print(f"[ocr_scan] OK(pdf_text_extracted): {outdir}")
+                    return 0
+                else:
+                    errs.append(r3.stderr.strip() if r3.stderr else "pdftotext failed")
+            # если и это не вышло — явная ошибка
+            write_meta(outdir, status="error", errors=errs or ["pdf rasterize failed"])
+            return 0
+
+        images = imgs
+    else:
+        images = [inp]
+
+    # OCR (для изображений)
+    if not have_tess:
+        write_meta(outdir, status="missing_tesseract", errors=["tesseract not found"])
+        return 0
+
+    texts = []
+    for img in images:
+        r = run(["tesseract", img, "stdout", "-l", lang])
+        if r.returncode != 0:
+            write_meta(outdir, status="error", errors=[r.stderr.strip() or "tesseract failed"])
+            return 0
+        texts.append(r.stdout)
+
+    full = "\n\n".join([t.strip() for t in texts]).strip()
+    with open(os.path.join(outdir, "text.txt"), "w", encoding="utf-8") as f:
+        f.write(full)
+
+    write_meta(outdir,
+               status="ok",
+               pages=len(images) if is_pdf(inp) else 1,
+               lang=lang,
+               duration_sec=round(time.time()-t0,2))
+    print(f"[ocr_scan] OK: {outdir}")
+    return 0
+
+if __name__=="__main__":
+    raise SystemExit(main())

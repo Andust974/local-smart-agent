@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import os, json, urllib.parse, time
+
+PORT = int(os.getenv("TASK_API_PORT", "8766"))
+TOKEN = os.getenv("TASK_API_TOKEN", "changeme")
+BASE = os.path.expanduser("~/ai-agent/projects/local_smart_agent")
+
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/health":
+            return self._json({"status": "ok"})
+        if parsed.path == "/report_pack":
+            qs = urllib.parse.parse_qs(parsed.query)
+            token = qs.get("token", [""])[0]
+            if token != TOKEN:
+                return self._json({"error": "unauthorized"}, 403)
+            try:
+                count = int(qs.get("count", ["5"])[0])
+            except Exception:
+                count = 5
+            os.makedirs(os.path.join(BASE, "tasks", "inbox"), exist_ok=True)
+            task = {"task": "report_pack", "count": count, "ts": int(time.time())}
+            fname = time.strftime("task_%Y%m%d_%H%M%S_report_pack.json", time.localtime())
+            with open(os.path.join(BASE, "tasks", "inbox", fname), "w", encoding="utf-8") as f:
+                json.dump(task, f, ensure_ascii=False)
+            return self._json({"queued": f"tasks/inbox/{fname}"})
+        return self._json({"error": "not found"}, 404)
+
+    def log_message(self, fmt, *args):  # тише в консоли
+        pass
+
+    def _json(self, obj, code=200):
+        b = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+if __name__ == "__main__":
+    httpd = HTTPServer(("127.0.0.1", PORT), H)
+    print(f"[task_api] serving on http://127.0.0.1:{PORT}")
+    httpd.serve_forever()

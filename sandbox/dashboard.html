@@ -1,0 +1,107 @@
+<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Local Smart Agent — Dashboard</title>
+<style>
+ body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:16px}
+ header{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+ .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:12px 0}
+ .row{display:flex;gap:12px;flex-wrap:wrap}
+ .stat{min-width:160px}
+ button{padding:8px 12px;border-radius:10px;border:1px solid #999;background:#fafafa;cursor:pointer}
+ .ok{color:#0a0}
+ .err{color:#b00}
+ input,select{padding:6px 8px;border:1px solid #bbb;border-radius:8px}
+ code,pre{background:#f7f7f7;border:1px solid #eee;border-radius:8px;padding:8px;display:block;max-height:260px;overflow:auto}
+</style>
+</head><body>
+<header>
+  <h1 style="margin:0">Dashboard</h1>
+  <button id="btnIndex">Reports Index</button>
+  <button id="btnZip">Latest ZIP</button>
+</header>
+
+<div class="card">
+  <div class="row">
+    <label>From <input type="date" id="from"></label>
+    <label>To <input type="date" id="to"></label>
+    <label>Source
+      <select id="source"><option value="">Any</option><option>email</option><option>fs</option></select>
+    </label>
+    <label>Status
+      <select id="status"><option value="">Any</option><option>ok</option><option>error</option></select>
+    </label>
+    <button id="apply">Apply</button>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card stat"><b>Total docs</b><div id="statTotal">—</div></div>
+  <div class="card stat"><b>Success rate</b><div id="statRate">—</div></div>
+  <div class="card stat"><b>Avg OCR time</b><div id="statTime">—</div></div>
+</div>
+
+<div class="card">
+  <b>Live logs (ocr_summary.log, last 100):</b>
+  <pre id="logs">loading…</pre>
+</div>
+
+<div id="banner" class="card" style="display:none"></div>
+
+<script>
+const api = {
+  health: 'http://127.0.0.1:8766/health',
+  logs:   '/logs/ocr_summary.log' // served statically if you expose project dir
+};
+function banner(msg, cls){ const b=document.getElementById('banner'); b.className='card '+(cls||''); b.style.display='block'; b.innerText=msg; setTimeout(()=>b.style.display='none', 4000); }
+async function ping(){
+  try{ const r=await fetch(api.health,{cache:'no-store'}); const ok=r.ok; banner(ok?'API OK':'API FAIL', ok?'ok':'err'); }
+  catch(e){ banner('API ERROR', 'err'); }
+}
+async function tailLogs(){
+  try{ const r=await fetch(api.logs,{cache:'no-store'}); if(!r.ok) return;
+    const t=await r.text(); const lines=t.trim().split('\n').slice(-100).join('\n');
+    document.getElementById('logs').textContent = lines || '— no data —';
+  }catch(e){ document.getElementById('logs').textContent='(no access)'; }
+}
+function fakeStats(){ // placeholder until real endpoints
+  const total = Math.floor(Math.random()*200)+50;
+  const ok = Math.floor(total*(0.8+Math.random()*0.15));
+  const rate = total? Math.round((ok/total)*100):0;
+  document.getElementById('statTotal').innerText = total;
+  document.getElementById('statRate').innerText = rate+'%';
+  document.getElementById('statTime').innerText = (15+Math.random()*10).toFixed(1)+'s';
+}
+document.getElementById('apply').onclick = ()=>{ fakeStats(); banner('Filters applied','ok'); };
+document.getElementById('btnIndex').onclick = ()=>{ location.href='/reports/'; };
+document.getElementById('btnZip').onclick   = ()=>{ location.href='/latest.zip'; };
+fakeStats(); tailLogs(); ping(); setInterval(tailLogs, 4000); setInterval(ping, 15000);
+</script>
+</body></html>
+<div class="card"><b>Reports (latest)</b><div id="repTable"></div></div>
+<script>
+const qs=(id)=>document.getElementById(id);
+function params(){const f=qs('from')?.value||'',t=qs('to')?.value||'',s=qs('status')?.value||'';const q=[];if(f)q.push('date_from='+f);if(t)q.push('date_to='+t);if(s)q.push('status='+s);return q.length?('?'+q.join('&')):'';}
+async function loadMetrics(){try{const r=await fetch('http://127.0.0.1:8766/metrics'+params(),{cache:'no-store'});const j=await r.json();qs('statTotal').textContent=j.total;qs('statRate').textContent=(j.success_rate||0)+'%';qs('statTime').textContent=(j.avg_ocr_time_sec??'—');}catch(e){banner('metrics error','err');}}
+async function loadReports(){try{const extra=params();const r=await fetch('http://127.0.0.1:8766/reports/list?limit=30'+(extra?('&'+extra.slice(1)):''),{cache:'no-store'});const a=await r.json();let h='<table><tr><th>id</th><th>ts</th><th>status</th></tr>';for(const x of a){h+=`<tr><td>${x.id}</td><td>${x.ts}</td><td>${x.status}</td></tr>`}h+='</table>';qs('repTable').innerHTML=h;}catch(e){qs('repTable').innerText='(error)';}}
+qs('apply')?.addEventListener('click',()=>{loadMetrics();loadReports();banner('Filters applied','ok');});
+loadMetrics();loadReports();setInterval(loadMetrics,10000);setInterval(loadReports,12000);
+</script>
+<style>
+.st-ok{font-weight:600}
+.st-skip{opacity:.7}
+.st-fail{font-weight:700}
+.st-ok{color:#16a34a}.st-skip{color:#6b7280}.st-fail{color:#dc2626}
+</style>
+<script>
+function _badge(s){const c=s==='ok'?'st-ok':(s==='skip'?'st-skip':'st-fail');return `<span class="${c}">${s}</span>`;}
+async function loadReports(){
+  try{
+    const extra=(typeof params==='function')?params():'';
+    const r=await fetch('http://127.0.0.1:8766/reports/list?limit=30'+(extra?('&'+extra.slice(1)):''),{cache:'no-store'});
+    const a=await r.json();
+    let h='<table><tr><th>id</th><th>ts</th><th>status</th></tr>';
+    for(const x of a){h+=`<tr><td>${x.id}</td><td>${x.ts}</td><td>${_badge(x.status)}</td></tr>`}
+    h+='</table>'; document.getElementById('repTable').innerHTML=h;
+  }catch(e){document.getElementById('repTable').innerText='(error)';}
+}
+</script>

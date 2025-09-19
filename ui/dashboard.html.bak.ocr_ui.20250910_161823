@@ -1,0 +1,79 @@
+<!doctype html><meta charset="utf-8"><title>Local Smart Agent</title><div id="app"></div>
+
+<!-- === OCR quick action === -->
+<style>
+.card{border:1px solid #e6e6e6;border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 3px 12px rgba(0,0,0,.06)}
+.btn{padding:10px 14px;border:0;border-radius:8px;cursor:pointer}
+.btn-primary{background:#5b8cff;color:#fff}
+.muted{color:#666;font-size:.9em;margin-top:6px}
+</style>
+
+<div class="card">
+  <h3>OCR (PDF/IMG)</h3>
+  <input id="ocrPath" type="text" placeholder="sandbox/ocr_test.pdf" style="width:70%">
+  <button class="btn btn-primary" onclick="enqueueOCR()">Запустить OCR</button>
+  <div id="ocrMsg" class="muted"></div>
+</div>
+
+<script>
+async function enqueueOCR(){
+  const p = document.getElementById('ocrPath').value || 'sandbox/ocr_test.pdf';
+  try{
+    const r = await fetch('/enqueue/ocr?path='+encodeURIComponent(p)+'&lang=eng+rus+pol',{method:'POST'});
+    const j = await r.json();
+    document.getElementById('ocrMsg').innerText = 'Queued: ' + (j.task || JSON.stringify(j));
+  }catch(e){
+    document.getElementById('ocrMsg').innerText = 'Ошибка: API недоступно. Проверь task-api.service';
+  }
+}
+</script>
+
+<!-- === OCR: последний результат === -->
+<style>
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.85em;}
+.badge.ok{background:#d1fae5;color:#065f46}
+.badge.warn{background:#fef3c7;color:#92400e}
+.badge.err{background:#fee2e2;color:#991b1b}
+.pre{white-space:pre-wrap;border:1px solid #eee;border-radius:8px;padding:10px;background:#fafafa}
+</style>
+
+<div class="card" id="ocrLastCard">
+  <h3>OCR — последний результат <span id="ocrStatus" class="badge">…</span></h3>
+  <div id="ocrMeta" class="muted"></div>
+  <div id="ocrText" class="pre" style="margin-top:10px; max-height:220px; overflow:auto;"></div>
+  <button class="btn" style="margin-top:10px" onclick="loadOcrLatest()">Обновить</button>
+</div>
+
+<script>
+function badgeClass(s){
+  if(s==="ok") return "badge ok";
+  if(s==="pdf_text_extracted"||s==="subscription_required"||s==="missing_tesseract"||s==="missing_pdftoppm") return "badge warn";
+  return "badge err";
+}
+async function loadOcrLatest(){
+  try{
+    const r = await fetch('/reports/ocr/latest'); 
+    if(!r.ok){ 
+      document.getElementById('ocrStatus').className='badge err';
+      document.getElementById('ocrStatus').innerText='нет отчётов';
+      document.getElementById('ocrMeta').innerText='';
+      document.getElementById('ocrText').innerText='';
+      return;
+    }
+    const j = await r.json();
+    const st = (j.meta&&j.meta.status)||'unknown';
+    const pages = (j.meta&&j.meta.pages)!=null ? j.meta.pages : '-';
+    const lang = (j.meta&&j.meta.lang)||'-';
+    const dur = (j.meta&&j.meta.duration_sec)!=null ? j.meta.duration_sec+'s' : '-';
+    document.getElementById('ocrStatus').className = badgeClass(st);
+    document.getElementById('ocrStatus').innerText = st;
+    document.getElementById('ocrMeta').innerText = `dir: \${j.dir} • pages: \${pages} • lang: \${lang} • time: \${dur}`;
+    document.getElementById('ocrText').innerText = (j.text_head||'').trim() || '(пусто)';
+  }catch(e){
+    document.getElementById('ocrStatus').className='badge err';
+    document.getElementById('ocrStatus').innerText='API ошибка';
+  }
+}
+// автообновление при загрузке
+window.addEventListener('load', loadOcrLatest);
+</script>

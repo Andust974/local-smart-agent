@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Ротация OCR-логов: если файл > MAX_BYTES — архивируем в logs/archive/ и обнуляем.
+# Плюс удерживаем не более MAX_KEEP последних архивов на каждый лог.
+set -Eeuo pipefail
+
+ROOT="$HOME/ai-agent/projects/local_smart_agent"
+ARCH="$ROOT/logs/archive"
+MAX_BYTES="${MAX_BYTES:-5242880}"  # 5 MiB по умолчанию
+MAX_KEEP="${MAX_KEEP:-10}"         # храним 10 архивов на лог
+
+mkdir -p "$ARCH"
+
+rotate_one() {
+  local f="$1"
+  local limit="${2:-$MAX_BYTES}"
+  [[ -f "$f" ]] || return 0
+  local sz
+  sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+  if (( sz > limit )); then
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S_%N)
+    gzip -c "$f" > "$ARCH/$(basename "$f").$ts.gz" && : > "$f"
+    echo "[logrotate] $(basename "$f") → archive ($sz bytes)"
+  fi
+}
+
+prune_archives() {
+  local base="$1"
+  ls -1t "$ARCH/${base}."*.gz 2>/dev/null | tail -n +$((MAX_KEEP+1)) | xargs -r rm -f || true
+}
+
+# Ротируем OCR-логи
+for lf in \
+  "$ROOT/logs/ocr_norm.log" \
+  "$ROOT/logs/ocr_parse.log" \
+  "$ROOT/logs/ocr_pipeline.log" \
+  "$ROOT/logs/ocr_cleanup.log" \
+  "$ROOT/logs/ocr_summary.log" \
+  "$ROOT/logs/inbox_watcher.log" \
+  "$ROOT/logs/tg_bridge.log"
+do
+  rotate_one "$lf"
+  prune_archives "$(basename "$lf")"
+done
+
+SECURITY_LOG="$ROOT/logs/security.log"
+
+
+## rotate security.log
+if [ -f "$SECURITY_LOG" ]; then
+  sz=$(wc -c <"$SECURITY_LOG" 2>/dev/null || echo 0)
+  # порог: 5 MiB
+  if [ "$sz" -ge $((5*1024*1024)) ]; then
+    ts=$(date +%Y%m%d_%H%M%S_%N)
+    mkdir -p "$ROOT/logs/archive"
+    cp "$SECURITY_LOG" "$ROOT/logs/archive/security_${ts}.log"
+    : > "$SECURITY_LOG"
+    # хранить не более 10 архивов
+    ls -1t "$ROOT/logs/archive"/security_*.log 2>/dev/null | tail -n +11 | xargs -r rm -f
+  fi
+fi

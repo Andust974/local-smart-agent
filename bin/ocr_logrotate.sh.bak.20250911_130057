@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Лёгкая ротация: если файл > MAX_BYTES (по умолчанию 5 MiB) — архивируем в logs/archive/ и обнуляем.
+set -u
+
+ROOT="/home/andrei-work/ai-agent/projects/local_smart_agent"
+ARCH="$ROOT/logs/archive"
+MAX_BYTES="${MAX_BYTES:-5242880}"  # 5 MiB
+
+mkdir -p "$ARCH"
+
+rotate_one() {
+  local f="$1"
+  local limit="${2:-$MAX_BYTES}"
+  [[ -f "$f" ]] || return 0
+  local sz
+  sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
+  if (( sz > limit )); then
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    gzip -c "$f" > "$ARCH/$(basename "$f").$ts.gz" && : > "$f"
+    echo "[logrotate] $(basename "$f") -> archive ($sz bytes)"
+  fi
+}
+
+# Ротируем OCR-логи
+rotate_one "$ROOT/logs/ocr_norm.log"
+rotate_one "$ROOT/logs/ocr_parse.log"
+rotate_one "$ROOT/logs/ocr_pipeline.log"
+rotate_one "$ROOT/logs/ocr_cleanup.log"
+rotate_one "$ROOT/logs/ocr_summary.log"
+
+# Дополнительно: вспомогательные логи проекта
+rotate_one "$ROOT/logs/inbox_watcher.log"
+rotate_one "$ROOT/logs/tg_bridge.log"

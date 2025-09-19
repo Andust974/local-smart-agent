@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Local Smart Agent — Bot & Команды</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:20px;line-height:1.4}
+    h1{margin:0 0 12px}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    input,select,button,textarea{padding:8px;font:inherit}
+    table{border-collapse:collapse;width:100%;margin-top:12px}
+    th,td{border:1px solid #ddd;padding:8px}
+    th{background:#f7f7f7;text-align:left}
+    .muted{color:#777}
+    .ok{color:#0a0}
+    .err{color:#a00}
+    .card{border:1px solid #eee;border-radius:8px;padding:12px;margin-top:12px}
+    .small{font-size:12px}
+    textarea{width:100%;min-height:80px}
+  </style>
+</head>
+<body>
+  <h1>Bot & Команды</h1>
+
+  <div class="card">
+    <div class="row">
+      <label>API token:
+        <input id="token" placeholder="changeme" style="min-width:200px">
+      </label>
+      <button onclick="saveToken()">Сохранить</button>
+      <span class="muted small">Хранится в localStorage, используется для запросов к API.</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Добавить команду</h3>
+    <div class="row">
+      <input id="name" placeholder="/about" style="min-width:160px">
+      <select id="type">
+        <option value="reply_text">reply_text</option>
+        <option value="reply_link">reply_link</option>
+        <option value="call_api">call_api</option>
+      </select>
+      <button onclick="add()">Добавить</button>
+    </div>
+    <p class="small muted">Payload (JSON):</p>
+    <textarea id="payload" placeholder='{"text":"Я твой агент, v1.0"}'></textarea>
+    <div id="addStatus" class="small"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <h3 style="margin-right:auto">Список команд</h3>
+      <button onclick="loadList()">Обновить</button>
+      <a href="dashboard.html"><button>← Назад в Dashboard</button></a>
+    </div>
+    <table id="tbl">
+      <thead>
+        <tr><th>ID</th><th>Команда</th><th>Тип</th><th>Payload</th><th>Статус</th><th>Действия</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="listStatus" class="small muted"></div>
+  </div>
+
+<script>
+const $ = sel => document.querySelector(sel);
+const api = (path, q={}) => {
+  const t = ($("#token").value || "").trim();
+  const qs = new URLSearchParams({token: t, ...q});
+  return fetch(path + "?" + qs.toString(), {method:"GET"});
+};
+
+function saveToken(){
+  localStorage.setItem("lsa_api_token", ($("#token").value||"").trim());
+}
+
+function loadToken(){
+  const t = localStorage.getItem("lsa_api_token") || "changeme";
+  $("#token").value = t;
+}
+
+async function loadList(){
+  $("#listStatus").textContent = "Загрузка...";
+  try{
+    const r = await api("/bot/commands");
+    const js = await r.json();
+    const rows = js.items || [];
+    const tb = $("#tbl tbody");
+    tb.innerHTML = "";
+    for(const x of rows){
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${x.id}</td>
+        <td><code>${x.name}</code></td>
+        <td>${x.type}</td>
+        <td><pre class="small" style="white-space:pre-wrap;margin:0">${x.payload||""}</pre></td>
+        <td>${x.enabled ? "on" : "off"}</td>
+        <td>
+          <button data-id="${x.id}" class="del">Удалить</button>
+        </td>`;
+      tb.appendChild(tr);
+    }
+    tb.querySelectorAll("button.del").forEach(b=>{
+      b.onclick = async ()=>{
+        const id = b.getAttribute("data-id");
+        if(!confirm("Удалить команду id="+id+"?")) return;
+        const r = await api("/bot/commands/del", {id});
+        const js = await r.json();
+        $("#listStatus").textContent = js.status || JSON.stringify(js);
+        loadList();
+      };
+    });
+    $("#listStatus").textContent = `Всего: ${rows.length}`;
+  }catch(e){
+    $("#listStatus").innerHTML = `<span class="err">Ошибка: ${e}</span>`;
+  }
+}
+
+async function add(){
+  $("#addStatus").textContent = "Отправка...";
+  const name = ($("#name").value||"").trim();
+  const type = ($("#type").value||"").trim();
+  const payloadRaw = $("#payload").value||"";
+  if(!name.startsWith("/")){ $("#addStatus").innerHTML = '<span class="err">Имя команды должно начинаться с "/"</span>'; return; }
+  try{
+    // payload передаём как строку (JSON внутри строки)
+    const r = await api("/bot/commands/add", {name, type, payload: payloadRaw});
+    const js = await r.json();
+    if(js.status === "ok"){
+      $("#addStatus").innerHTML = '<span class="ok">OK, id='+js.id+'</span>';
+      loadList();
+    }else{
+      $("#addStatus").innerHTML = '<span class="err">'+(js.error||JSON.stringify(js))+'</span>';
+    }
+  }catch(e){
+    $("#addStatus").innerHTML = '<span class="err">Ошибка: '+e+'</span>';
+  }
+}
+
+loadToken();
+loadList();
+</script>
+</body>
+</html>
