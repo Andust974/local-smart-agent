@@ -4,3 +4,7 @@ __pycache__/
 reports/
 *.zip
 .env
+
+# large models
+selftrain/rag/models/**
+*.safetensors
