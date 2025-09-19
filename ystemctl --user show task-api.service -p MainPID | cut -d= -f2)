@@ -1,3 +1,0 @@
-MainPID=1757
-ExecStart={ path=/home/andrei-work/ai-agent/projects/local_smart_agent/.venv/bin/uvicorn ; argv[]=/home/andrei-work/ai-agent/projects/local_smart_agent/.venv/bin/uvicorn bin.task_api:app --host 127.0.0.1 --port 8766 --log-level info --timeout-keep-alive 5 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
-FragmentPath=/home/andrei-work/.config/systemd/user/task-api.service
