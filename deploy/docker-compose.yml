@@ -1,0 +1,7 @@
+services:
+  task-api:
+    image: ghcr.io/Andust974/local-smart-agent/task-api:${TAG:-latest}
+    env_file: .env
+    ports:
+      - "127.0.0.1:8766:8766"   # наружу отдавай через nginx с TLS
+    restart: unless-stopped

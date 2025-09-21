@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+# зависимости (подложи requirements.txt если есть)
+COPY requirements.txt* /app/ 2>/dev/null || true
+RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
+COPY . /app
+# запускаем через обёртку
+ENV TASK_API_PORT=8766
+CMD ["uvicorn","deploy.app_auth_wrap:app","--host","0.0.0.0","--port","8766"]
