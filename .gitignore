@@ -20,3 +20,7 @@ selftrain/rag/models/**
 # large models
 selftrain/rag/models/**
 *.safetensors
+
+# large models
+selftrain/rag/models/**
+*.safetensors
