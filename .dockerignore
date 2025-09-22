@@ -1,0 +1,8 @@
+.git
+__pycache__/
+*.pyc
+.venv
+selftrain/rag/models/
+*.safetensors
+logs/
+reports/
