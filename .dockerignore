@@ -1,8 +1,19 @@
+# не отправляем лишнее в контекст сборки
 .git
-__pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.log
+.env
 .venv
-selftrain/rag/models/
-*.safetensors
-logs/
+**/.venv/
+*.egg-info/
+dist/
+build/
+
+# тяжёлые артефакты
 reports/
+logs/
+selftrain/rag/models/**
+*.safetensors
