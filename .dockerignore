@@ -1,18 +1,8 @@
-# не отправляем лишнее в контекст сборки
+!.gitignore
 .git
-**/__pycache__/
-*.pyc
-*.pyo
-*.pyd
+__pycache__/
+*.py[cod]
 *.log
-.env
-.venv
-**/.venv/
-*.egg-info/
-dist/
-build/
-
-# тяжёлые артефакты
 reports/
 logs/
 selftrain/rag/models/**
