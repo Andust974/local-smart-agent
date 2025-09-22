@@ -1,24 +1,39 @@
 name: release
 on:
   push:
-    tags: ["v*.*.*"]
-permissions:
-  contents: read
-  packages: write
+    tags: ['v*']
+
 jobs:
-  task_api_image:
+  build-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Prepare vars (lowercase owner)
+        id: meta
+        run: |
+          echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+          echo "REF_NAME=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build & Push (task-api)
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./deploy/Dockerfile.task_api
           push: true
-          tags: ghcr.io/${{ github.repository }}/task-api:${{ github.ref_name }}
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.OWNER_LC }}/local-smart-agent-task-api:${{ steps.meta.outputs.REF_NAME }}
+            ghcr.io/${{ steps.meta.outputs.OWNER_LC }}/local-smart-agent-task-api:latest
