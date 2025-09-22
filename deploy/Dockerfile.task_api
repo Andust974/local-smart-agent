@@ -1,7 +1,8 @@
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
 
 WORKDIR /app
 
@@ -12,12 +13,9 @@ RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.
 # код
 COPY . /app
 
-# каталоги и дефолтные env
+# каталоги, которые использует сервис
 RUN mkdir -p /app/reports /app/logs
-ENV TASK_API_PORT=8766 \
-    REPORTS_ROOT=/app/reports \
-    LOGS_ROOT=/app/logs \
-    TASK_API_TOKEN=dev-local-token
 
-EXPOSE 8766
+# порт и запуск
+ENV TASK_API_PORT=8766
 CMD ["uvicorn","deploy.app_auth_wrap:app","--host","0.0.0.0","--port","8766"]
