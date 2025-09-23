@@ -1,4 +1,3 @@
-!.gitignore
 .git
 __pycache__/
 *.py[cod]
@@ -7,3 +6,4 @@ reports/
 logs/
 selftrain/rag/models/**
 *.safetensors
+# ВАЖНО: НЕ игнорировать bin/ — там лежит task_api.py
